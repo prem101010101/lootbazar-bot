@@ -8,7 +8,7 @@ API_ID = 38455364
 API_HASH = "d52e2859fb89e9b27a8217e32b55d3b8"
 
 # Session string from Railway environment variable (no OTP needed)
-SESSION_STRING = os.environ.get("SESSION_STRING", "")
+SESSION_STRING = os.environ.get("SESSION_STRING", "").strip().rstrip("=")
 
 # Public channels (username only, no @)
 PUBLIC_CHANNELS = [
