@@ -1,11 +1,14 @@
-import re, requests
+import re, requests, os
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 from telethon.errors import UserAlreadyParticipantError
 from telethon.tl.functions.messages import ImportChatInviteRequest, CheckChatInviteRequest
 
 API_ID = 38455364
 API_HASH = "d52e2859fb89e9b27a8217e32b55d3b8"
-PHONE_NUMBER = "+919579179596"
+
+# Session string from Railway environment variable (no OTP needed)
+SESSION_STRING = os.environ.get("SESSION_STRING", "")
 
 # Public channels (username only, no @)
 PUBLIC_CHANNELS = [
@@ -13,17 +16,17 @@ PUBLIC_CHANNELS = [
     "Loot_DealsX",
 ]
 
-# Private channels — paste only the hash part after t.me/+ or joinchat/
+# Private channels — hash part after t.me/+ or joinchat/
 PRIVATE_INVITES = [
-    "kTvbwlaPbH1mM2E1",        # channel 1
-    "sX1Ht4p33nFjZDE1",        # channel 3
+    "kTvbwlaPbH1mM2E1",
+    "sX1Ht4p33nFjZDE1",
     "AAAAAFZ4xgGd0u8r66YAGg",  # Trending Loot Deals
 ]
 
 TARGET_CHANNEL = "lootbazaar7777"
 AMAZON_AFFILIATE_TAG = "lootbazar064-21"
 
-client = TelegramClient("lootalert_session", API_ID, API_HASH)
+client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
 AMAZON_URL_RE = re.compile(r'https?://(?:www\.)?amazon\.in/[^\s]+')
 AMAZON_SHORT_RE = re.compile(r'https?://amzn\.to/[^\s]+')
@@ -51,7 +54,7 @@ def swap_links(text):
     return text
 
 async def main():
-    await client.start(phone=PHONE_NUMBER)
+    await client.start()
     source_entities = []
 
     for username in PUBLIC_CHANNELS:
@@ -80,7 +83,7 @@ async def main():
             print(f"[WARN] Private invite {invite_hash[:8]}...: {e}")
 
     if not source_entities:
-        print("[ERROR] No source channels found! Check usernames/invites.")
+        print("[ERROR] No source channels found!")
         return
 
     @client.on(events.NewMessage(chats=source_entities))
