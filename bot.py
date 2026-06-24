@@ -6,27 +6,22 @@ from telethon.tl.functions.messages import ImportChatInviteRequest, CheckChatInv
 
 API_ID = 38455364
 API_HASH = "d52e2859fb89e9b27a8217e32b55d3b8"
+PHONE_NUMBER = "+919579179596"
 
-# Session string from Railway environment variable (no OTP needed)
-SESSION_STRING = os.environ.get("SESSION_STRING", "").strip().rstrip("=")
+SESSION_STRING = os.environ.get("SESSION_STRING", "").strip()
+TELEGRAM_CODE = os.environ.get("TELEGRAM_CODE", "").strip()
 
-# Public channels (username only, no @)
 PUBLIC_CHANNELS = [
     "loot_deals_amazon_flipkart2",
     "Loot_DealsX",
 ]
-
-# Private channels — hash part after t.me/+ or joinchat/
 PRIVATE_INVITES = [
     "kTvbwlaPbH1mM2E1",
     "sX1Ht4p33nFjZDE1",
-    "AAAAAFZ4xgGd0u8r66YAGg",  # Trending Loot Deals
+    "AAAAAFZ4xgGd0u8r66YAGg",
 ]
-
 TARGET_CHANNEL = "lootbazaar7777"
 AMAZON_AFFILIATE_TAG = "lootbazar064-21"
-
-client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
 AMAZON_URL_RE = re.compile(r'https?://(?:www\.)?amazon\.in/[^\s]+')
 AMAZON_SHORT_RE = re.compile(r'https?://amzn\.to/[^\s]+')
@@ -54,23 +49,58 @@ def swap_links(text):
     return text
 
 async def main():
-    await client.start()
-    source_entities = []
+    client = None
 
+    # Try existing session string first
+    if SESSION_STRING:
+        try:
+            client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+            await client.connect()
+            if await client.is_user_authorized():
+                print("[OK] Logged in with SESSION_STRING")
+            else:
+                raise Exception("Not authorized")
+        except Exception as e:
+            print(f"[WARN] SESSION_STRING failed: {e}")
+            client = None
+
+    # Fresh login using TELEGRAM_CODE
+    if client is None:
+        if not TELEGRAM_CODE:
+            print("[ERROR] SESSION_STRING failed and no TELEGRAM_CODE set!")
+            print("[ACTION] Go to Railway → Variables → Add TELEGRAM_CODE with the OTP sent to your phone")
+            print(f"[INFO] OTP was sent to {PHONE_NUMBER}")
+            return
+        try:
+            client = TelegramClient(StringSession(), API_ID, API_HASH)
+            await client.start(
+                phone=PHONE_NUMBER,
+                code_callback=lambda: TELEGRAM_CODE
+            )
+            new_session = client.session.save()
+            print("\n" + "="*60)
+            print("LOGIN SUCCESS! Save this as SESSION_STRING in Railway:")
+            print(new_session)
+            print("="*60 + "\n")
+        except Exception as e:
+            print(f"[ERROR] Login failed: {e}")
+            return
+
+    source_entities = []
     for username in PUBLIC_CHANNELS:
         try:
             entity = await client.get_entity(username)
             source_entities.append(entity)
-            print(f"[OK] Watching public: @{username}")
+            print(f"[OK] Watching: @{username}")
         except Exception as e:
-            print(f"[WARN] Could not get @{username}: {e}")
+            print(f"[WARN] @{username}: {e}")
 
     for invite_hash in PRIVATE_INVITES:
         try:
             result = await client(ImportChatInviteRequest(invite_hash))
             entity = result.chats[0]
             source_entities.append(entity)
-            print(f"[OK] Joined & watching: {entity.title}")
+            print(f"[OK] Joined: {entity.title}")
         except UserAlreadyParticipantError:
             try:
                 info = await client(CheckChatInviteRequest(invite_hash))
@@ -78,9 +108,9 @@ async def main():
                     source_entities.append(info.chat)
                     print(f"[OK] Already in: {info.chat.title}")
             except Exception as e:
-                print(f"[WARN] Already joined but couldn't get entity: {e}")
+                print(f"[WARN] {e}")
         except Exception as e:
-            print(f"[WARN] Private invite {invite_hash[:8]}...: {e}")
+            print(f"[WARN] {invite_hash[:8]}...: {e}")
 
     if not source_entities:
         print("[ERROR] No source channels found!")
@@ -98,7 +128,8 @@ async def main():
         except Exception as e:
             print(f"[ERROR] {e}")
 
-    print(f"\nBot running! Watching {len(source_entities)} channels. Posting to @{TARGET_CHANNEL}")
+    print(f"\nBot running! Watching {len(source_entities)} channels → @{TARGET_CHANNEL}")
     await client.run_until_disconnected()
 
-client.loop.run_until_complete(main())
+import asyncio
+asyncio.run(main())
