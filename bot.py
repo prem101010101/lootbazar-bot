@@ -1,7 +1,7 @@
 import re, requests, os
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telethon.errors import UserAlreadyParticipantError
+from telethon.errors import UserAlreadyParticipantError, SessionPasswordNeededError
 from telethon.tl.functions.messages import ImportChatInviteRequest, CheckChatInviteRequest
 
 API_ID = 38455364
@@ -64,26 +64,38 @@ async def main():
             print(f"[WARN] SESSION_STRING failed: {e}")
             client = None
 
-    # Fresh login using TELEGRAM_CODE
+    # Fresh login
     if client is None:
+        temp = TelegramClient(StringSession(), API_ID, API_HASH)
+        await temp.connect()
+
         if not TELEGRAM_CODE:
-            print("[ERROR] SESSION_STRING failed and no TELEGRAM_CODE set!")
-            print("[ACTION] Go to Railway → Variables → Add TELEGRAM_CODE with the OTP sent to your phone")
-            print(f"[INFO] OTP was sent to {PHONE_NUMBER}")
+            # Send OTP to phone
+            try:
+                await temp.send_code_request(PHONE_NUMBER)
+                print("[OK] OTP code sent to your Telegram app!")
+                print("[ACTION] Check Telegram on your phone, get the code")
+                print("[ACTION] Go to Railway Variables → Add TELEGRAM_CODE = (your code)")
+                print("[ACTION] Then redeploy and the bot will login!")
+            except Exception as e:
+                print(f"[ERROR] Could not send OTP: {e}")
+            await temp.disconnect()
             return
+
+        # Use the provided code to login
         try:
-            client = TelegramClient(StringSession(), API_ID, API_HASH)
-            await client.start(
-                phone=PHONE_NUMBER,
-                code_callback=lambda: TELEGRAM_CODE
-            )
-            new_session = client.session.save()
+            await temp.send_code_request(PHONE_NUMBER)
+            await temp.sign_in(PHONE_NUMBER, TELEGRAM_CODE)
+            new_session = temp.session.save()
             print("\n" + "="*60)
-            print("LOGIN SUCCESS! Save this as SESSION_STRING in Railway:")
+            print("LOGIN SUCCESS! Copy this and set as SESSION_STRING in Railway:")
             print(new_session)
-            print("="*60 + "\n")
+            print("="*60)
+            print("Also DELETE TELEGRAM_CODE variable after saving SESSION_STRING!")
+            client = temp
         except Exception as e:
             print(f"[ERROR] Login failed: {e}")
+            await temp.disconnect()
             return
 
     source_entities = []
