@@ -1,15 +1,12 @@
-import re, requests, os
+import re, requests, os, base64, struct, sqlite3
 from telethon import TelegramClient, events
-from telethon.sessions import StringSession
-from telethon.errors import UserAlreadyParticipantError, SessionPasswordNeededError
+from telethon.errors import UserAlreadyParticipantError
 from telethon.tl.functions.messages import ImportChatInviteRequest, CheckChatInviteRequest
 
 API_ID = 38455364
 API_HASH = "d52e2859fb89e9b27a8217e32b55d3b8"
-PHONE_NUMBER = "+919579179596"
 
 SESSION_STRING = os.environ.get("SESSION_STRING", "").strip()
-TELEGRAM_CODE = os.environ.get("TELEGRAM_CODE", "").strip()
 
 PUBLIC_CHANNELS = [
     "loot_deals_amazon_flipkart2",
@@ -48,57 +45,61 @@ def swap_links(text):
     text = AMAZON_URL_RE.sub(lambda m: rebuild_amazon_link(m.group(0)), text)
     return text
 
+def create_session_file(session_str, path="bot.session"):
+    """Manually decode session string and create SQLite session file."""
+    try:
+        raw = session_str[1:]  # Remove version byte
+        raw = raw.rstrip("=")
+        padding = (4 - len(raw) % 4) % 4
+        data = base64.urlsafe_b64decode(raw + "=" * padding)
+
+        if len(data) == 263:
+            dc_id, ip_bytes, port, auth_key = struct.unpack('>B4sH256s', data)
+            ip = '.'.join(str(b) for b in ip_bytes)
+        elif len(data) == 275:
+            dc_id, ip_bytes, port, auth_key = struct.unpack('>B16sH256s', data)
+            ip = ':'.join(format(b, '02x') for b in ip_bytes)
+        else:
+            print(f"[WARN] Unknown session size: {len(data)} bytes")
+            return False
+
+        conn = sqlite3.connect(path)
+        c = conn.cursor()
+        c.execute("CREATE TABLE IF NOT EXISTS version (version integer primary key)")
+        c.execute("INSERT OR REPLACE INTO version VALUES (7)")
+        c.execute("CREATE TABLE IF NOT EXISTS sessions (dc_id integer, server_address text, port integer, auth_key blob, takeout_id integer, primary key (dc_id))")
+        c.execute("DELETE FROM sessions")
+        c.execute("INSERT INTO sessions VALUES (?, ?, ?, ?, ?)", (dc_id, ip, port, auth_key, None))
+        c.execute("CREATE TABLE IF NOT EXISTS entities (id integer, hash integer, username text, phone integer, name text, date integer, primary key (id))")
+        c.execute("CREATE TABLE IF NOT EXISTS sent_files (md5_digest blob, file_size integer, type integer, id integer, hash integer, primary key (md5_digest, file_size, type))")
+        c.execute("CREATE TABLE IF NOT EXISTS update_state (id integer, pts integer, qts integer, date integer, seq integer, primary key (id))")
+        conn.commit()
+        conn.close()
+        print(f"[OK] Session created: dc_id={dc_id}, ip={ip}, port={port}")
+        return True
+    except Exception as e:
+        print(f"[ERROR] Session creation failed: {e}")
+        return False
+
 async def main():
-    client = None
+    if not SESSION_STRING:
+        print("[ERROR] No SESSION_STRING set in Railway Variables!")
+        return
 
-    # Try existing session string first
-    if SESSION_STRING:
-        try:
-            client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
-            await client.connect()
-            if await client.is_user_authorized():
-                print("[OK] Logged in with SESSION_STRING")
-            else:
-                raise Exception("Not authorized")
-        except Exception as e:
-            print(f"[WARN] SESSION_STRING failed: {e}")
-            client = None
+    if not create_session_file(SESSION_STRING, "bot.session"):
+        print("[ERROR] Could not create session file!")
+        return
 
-    # Fresh login
-    if client is None:
-        temp = TelegramClient(StringSession(), API_ID, API_HASH)
-        await temp.connect()
+    client = TelegramClient("bot", API_ID, API_HASH)
+    await client.connect()
 
-        if not TELEGRAM_CODE:
-            # Send OTP to phone
-            try:
-                await temp.send_code_request(PHONE_NUMBER)
-                print("[OK] OTP code sent to your Telegram app!")
-                print("[ACTION] Check Telegram on your phone, get the code")
-                print("[ACTION] Go to Railway Variables → Add TELEGRAM_CODE = (your code)")
-                print("[ACTION] Then redeploy and the bot will login!")
-            except Exception as e:
-                print(f"[ERROR] Could not send OTP: {e}")
-            await temp.disconnect()
-            return
+    if not await client.is_user_authorized():
+        print("[ERROR] Session not authorized — it may be expired")
+        return
 
-        # Use the provided code to login
-        try:
-            await temp.send_code_request(PHONE_NUMBER)
-            await temp.sign_in(PHONE_NUMBER, TELEGRAM_CODE)
-            new_session = temp.session.save()
-            print("\n" + "="*60)
-            print("LOGIN SUCCESS! Copy this and set as SESSION_STRING in Railway:")
-            print(new_session)
-            print("="*60)
-            print("Also DELETE TELEGRAM_CODE variable after saving SESSION_STRING!")
-            client = temp
-        except Exception as e:
-            print(f"[ERROR] Login failed: {e}")
-            await temp.disconnect()
-            return
-
+    print("[OK] Logged in successfully!")
     source_entities = []
+
     for username in PUBLIC_CHANNELS:
         try:
             entity = await client.get_entity(username)
